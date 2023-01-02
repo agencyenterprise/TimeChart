@@ -3,59 +3,67 @@ main();
 function main() {
     const el = document.getElementById('chart');
     const dataSin = [];
-    const dataCos = [];
     const baseTime = Date.now() - performance.now()
+
+    const series = Array(256).fill(0).map(_ => {
+        return {
+            data: [],
+            lineWidth: 1,
+            lineType: 3,
+        }
+    })
+
     const chart = new TimeChart(el, {
         // debugWebGL: true,
         // forceWebGL1: true,
         baseTime,
-        series: [
-            {
-                name: 'Sin',
-                data: dataSin,
-            },
-            {
-                name: 'Cos',
-                data: dataCos,
-                lineWidth: 2,
-                color: 'red',
-            },
-        ],
-        xRange: { min: 0, max: 20 * 1000 },
+        series,
         realTime: true,
+        xRange: { min: 0, max: 2000 },
+        tooltip: {
+            enabled: false,
+        },
         zoom: {
             x: {
                 autoRange: true,
-                minDomainExtent: 50,
             },
             y: {
                 autoRange: true,
-                minDomainExtent: 1,
             }
         },
-        tooltip: {
-            enabled: true,
-            xFormatter: (x) => new Date(x + baseTime).toLocaleString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3}),
-        },
+        legend: false,
     });
     const pointCountEl = document.getElementById('point-count');
 
-    let x = performance.now() - 20*1000;
+    let x = 0
     function update() {
-        const time = performance.now();
-        for (; x < time; x += 1) {
-            // const y = Math.random() * 500 + 100;
-            const y_sin = Math.sin(x * 0.002) * 320;
-            dataSin.push({ x, y: y_sin });
-
-            const y_cos = Math.cos(x * 0.002) * 200;
-            dataCos.push({ x, y: y_cos });
-        }
-        pointCountEl.innerText = dataSin.length;
+        series.forEach((s, idx) => {
+            const y = idx + 5 * Math.random()
+            s.data.push({ x, y, a: Math.random() })
+        })
+        x++;
+        pointCountEl.innerText = x * 256
         chart.update();
     }
+    let ev
+    ev = setInterval(update, 1);
 
-    const ev = setInterval(update, 5);
+    // let x = performance.now() - 20 * 1000;
+    // function update() {
+    //     const time = performance.now();
+    //     for (; x < time; x += 1) {
+    //         series.forEach((s, idx) => {
+    //             const y = idx + 5 * Math.random()
+    //             s.data.push({ x, y, a: Math.random() })
+    //         })
+    //     }
+    //     chart.update();
+    // }
+
+    // const ev = setInterval(update, 10);
+
+
+
     document.getElementById('stop-btn').addEventListener('click', function () {
         clearInterval(ev);
     });

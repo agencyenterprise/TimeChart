@@ -39,6 +39,7 @@ class ShaderUniformData {
 }
 
 const VS_HEADER = `#version 300 es
+precision highp float;
 layout (std140) uniform proj {
     vec2 modelScale;
     vec2 modelTranslate;
@@ -51,30 +52,34 @@ uniform float uStepLocation;
 const int TEX_WIDTH = ${BUFFER_TEXTURE_WIDTH};
 const int TEX_HEIGHT = ${BUFFER_TEXTURE_HEIGHT};
 
-vec2 dataPoint(int index) {
+vec3 dataPoint(int index) {
     int x = index % TEX_WIDTH;
     int y = index / TEX_WIDTH;
-    return texelFetch(uDataPoints, ivec2(x, y), 0).xy;
+    return texelFetch(uDataPoints, ivec2(x, y), 0).xyz;
 }
 `
 
 const LINE_FS_SOURCE = `#version 300 es
-precision lowp float;
-uniform vec4 uColor;
+precision highp float;
+in vec4 vertexColor;
 out vec4 outColor;
+
 void main() {
-    outColor = uColor;
+    outColor = vertexColor;
 }`;
 
 class NativeLineProgram extends LinkedWebGLProgram {
     locations;
     static VS_SOURCE = `${VS_HEADER}
 uniform float uPointSize;
-
+uniform vec4 uColor;
+out vec4 vertexColor;
 void main() {
-    vec2 pos2d = projectionScale * modelScale * (dataPoint(gl_VertexID) + modelTranslate);
+    vec3 dp = dataPoint(gl_VertexID);
+    vec2 pos2d = projectionScale * modelScale * (dp.xy + modelTranslate);
     gl_Position = vec4(pos2d, 0, 1);
     gl_PointSize = uPointSize;
+    vertexColor = vec4(uColor.xyz, dp.z);
 }
 `
 
@@ -98,13 +103,14 @@ void main() {
 class LineProgram extends LinkedWebGLProgram {
     static VS_SOURCE = `${VS_HEADER}
 uniform float uLineWidth;
-
+uniform vec4 uColor;
+out vec4 vertexColor;
 void main() {
     int side = gl_VertexID & 1;
     int di = (gl_VertexID >> 1) & 1;
     int index = gl_VertexID >> 2;
 
-    vec2 dp[2] = vec2[2](dataPoint(index), dataPoint(index + 1));
+    vec2 dp[2] = vec2[2](dataPoint(index).xy, dataPoint(index + 1).xy);
 
     vec2 base;
     vec2 off;
@@ -124,6 +130,7 @@ void main() {
     vec2 cssPose = modelScale * (base + modelTranslate);
     vec2 pos2d = projectionScale * (cssPose + off);
     gl_Position = vec4(pos2d, 0, 1);
+    vertexColor = vec4(uColor.xyz, 1.0);
 }`;
 
     locations;
@@ -155,8 +162,8 @@ class SeriesSegmentVertexArray {
     ) {
         this.dataBuffer = throwIfFalsy(gl.createTexture());
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
-        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG32F, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RG, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * 2));
+        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGB32F, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RGB, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * 3));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     }
@@ -175,20 +182,21 @@ class SeriesSegmentVertexArray {
         if (rowEnd < BUFFER_TEXTURE_HEIGHT && start + n === dps.length && bufferPos + n === rowEnd * BUFFER_TEXTURE_WIDTH)
             rowEnd++;
 
-        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * 2);
+        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * 3);
         for (let r = rowStart; r < rowEnd; r++) {
             for (let c = 0; c < BUFFER_TEXTURE_WIDTH; c++) {
                 const p = r * BUFFER_TEXTURE_WIDTH + c;
                 const i = Math.max(Math.min(start + p - bufferPos, dps.length - 1), 0);
                 const dp = dps[i];
-                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * 2;
+                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * 3;
                 buffer[bufferIdx] = dp.x;
                 buffer[bufferIdx + 1] = dp.y;
+                buffer[bufferIdx + 2] = dp.a;
             }
         }
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RG, gl.FLOAT, buffer);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGB, gl.FLOAT, buffer);
     }
 
     /**
