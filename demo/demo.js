@@ -2,7 +2,6 @@ main();
 
 function main() {
     const el = document.getElementById('chart');
-    const dataSin = [];
     const baseTime = Date.now() - performance.now()
 
     const series = Array(256).fill(0).map(_ => {
@@ -47,22 +46,6 @@ function main() {
     }
     let ev
     ev = setInterval(update, 1);
-
-    // let x = performance.now() - 20 * 1000;
-    // function update() {
-    //     const time = performance.now();
-    //     for (; x < time; x += 1) {
-    //         series.forEach((s, idx) => {
-    //             const y = idx + 5 * Math.random()
-    //             s.data.push({ x, y, a: Math.random() })
-    //         })
-    //     }
-    //     chart.update();
-    // }
-
-    // const ev = setInterval(update, 10);
-
-
 
     document.getElementById('stop-btn').addEventListener('click', function () {
         clearInterval(ev);
