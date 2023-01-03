@@ -20,7 +20,7 @@ function main() {
         realTime: true,
         xRange: { min: 0, max: 2000 },
         tooltip: {
-            enabled: false,
+            enabled: true,
         },
         zoom: {
             x: {
