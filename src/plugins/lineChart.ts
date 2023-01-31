@@ -6,9 +6,8 @@ import { TimeChartPlugin } from '.';
 import { LinkedWebGLProgram, throwIfFalsy } from './webGLUtils';
 import { DataPointsBuffer } from "../core/dataPointsBuffer";
 
-
-const BUFFER_TEXTURE_WIDTH = 256;
-const BUFFER_TEXTURE_HEIGHT = 2048;
+const BUFFER_TEXTURE_WIDTH = 520;
+const BUFFER_TEXTURE_HEIGHT = 360;
 const BUFFER_POINT_CAPACITY = BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT;
 const BUFFER_INTERVAL_CAPACITY = BUFFER_POINT_CAPACITY - 2;
 
@@ -153,6 +152,8 @@ void main() {
     }
 }
 
+const BUFFER_NUM_FIELDS = 3;
+
 class SeriesSegmentVertexArray {
     dataBuffer;
 
@@ -163,7 +164,7 @@ class SeriesSegmentVertexArray {
         this.dataBuffer = throwIfFalsy(gl.createTexture());
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
         gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGB32F, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RGB, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * 3));
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RGB, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * BUFFER_NUM_FIELDS));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     }
@@ -199,6 +200,50 @@ class SeriesSegmentVertexArray {
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGB, gl.FLOAT, buffer);
     }
 
+    syncBarPoints(start: number, n: number, bufferPos: number) {
+        // console.log('*** start =', start, ' n =', n, 'bufferPos=', bufferPos)
+        const dps: any[] = this.dataPoints
+            .flatMap(dp => [{
+                ...dp
+            }, {
+                x: dp.x,
+                y: dp.y,
+                a: dp.a,
+            }])
+        // console.log('dps = ', dps)
+        // console.log('bufferPos = ', bufferPos, 'texWidth =', texWidth, 'bufferTextureWidth = ', BUFFER_TEXTURE_WIDTH)
+        // bufferPos = bufferPos > 1 ? bufferPos * 2 : bufferPos
+        // n = n > 1 ? n * 2 : n
+        let rowStart = Math.floor((Math.max(0, bufferPos + start - n)) / BUFFER_TEXTURE_WIDTH);
+        let rowEnd = Math.ceil((bufferPos + start + n) / BUFFER_TEXTURE_WIDTH);
+        // console.log('*11* texWidth=', BUFFER_TEXTURE_WIDTH, 'rowStart=', rowStart, 'rowEnd=', rowEnd)
+        // Ensure we have some padding at both ends of data.
+        if (rowStart > 0 && start === 0 && bufferPos === rowStart * BUFFER_TEXTURE_WIDTH)
+            rowStart--;
+        if (rowEnd < BUFFER_TEXTURE_WIDTH && start + n === dps.length && bufferPos + n === rowEnd * BUFFER_TEXTURE_WIDTH)
+            rowEnd++;
+
+        // console.log('*11* rs=', rowStart, 're=', rowEnd, 'dps.length=', dps.length)
+
+        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * BUFFER_NUM_FIELDS);
+        for (let r = rowStart; r < rowEnd; r++) {
+            for (let c = 0; c < BUFFER_TEXTURE_WIDTH * 2; c++) {
+                const p = r * BUFFER_TEXTURE_WIDTH + c + 1;
+                const i = Math.max(Math.min(start + p - bufferPos, dps.length - 1), 0);
+                const dp = dps[i];
+                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * BUFFER_NUM_FIELDS;
+                // console.log('i = ', i, 'bufferIdx =', bufferIdx, 'c=', c, 'start=', start, 'p =', p, 'bufferPos=', bufferPos, 'dp =', dp)
+                buffer[bufferIdx] = dp.x;
+                buffer[bufferIdx + 1] = dp.y + (i % 2 == 0 ? 0.5 : -0.5);
+                buffer[bufferIdx + 2] = dp.a;
+            }
+        }
+        // console.log('*11* s=', rowStart, 'e=', rowEnd, 'b=', buffer)
+        const gl = this.gl;
+        gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGB, gl.FLOAT, buffer);
+    }
+
     /**
      * @param renderInterval [start, end) interval of data points, start from 0
      */
@@ -206,7 +251,6 @@ class SeriesSegmentVertexArray {
         const first = Math.max(0, renderInterval.start);
         const last = Math.min(BUFFER_INTERVAL_CAPACITY, renderInterval.end)
         const count = last - first
-
         const gl = this.gl;
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
@@ -224,6 +268,11 @@ class SeriesSegmentVertexArray {
             gl.drawArrays(gl.LINE_STRIP, first, count + 1);
         } else if (type === LineType.NativePoint) {
             gl.drawArrays(gl.POINTS, first, count + 1);
+        } else if (type === LineType.Bar) {
+            let firstP = (first * 2) - 2
+            let countP = (count * 2) + 2
+            // console.log('firstP = ', firstP, 'countP = ', countP, 'renderInterval = ', renderInterval, 'first=', first, 'last= ', last)
+            gl.drawArrays(gl.LINES, firstP, countP);
         }
     }
 }
@@ -243,6 +292,15 @@ class SeriesVertexArray {
     ) {
     }
 
+
+    private segmentSync(segment: SeriesSegmentVertexArray, start: number, n: number, bufferPos: number) {
+        if (this.series.lineType == LineType.Bar) {
+            segment.syncBarPoints(start, n, bufferPos)
+        } else {
+            segment.syncPoints(start, n, bufferPos)
+        }
+    }
+
     private popFront() {
         if (this.series.data.poped_front === 0)
             return;
@@ -256,7 +314,8 @@ class SeriesVertexArray {
             this.validStart -= BUFFER_INTERVAL_CAPACITY;
         }
 
-        this.segments[0].syncPoints(0, 0, this.validStart);
+        this.segmentSync(this.segments[0], 0, 0, this.validStart);
+        // this.segments[0].syncPoints(0, 0, this.validStart);
     }
     private popBack() {
         if (this.series.data.poped_back === 0)
@@ -267,16 +326,18 @@ class SeriesVertexArray {
         while (this.validEnd < BUFFER_POINT_CAPACITY - BUFFER_INTERVAL_CAPACITY) {
             const activeArray = this.segments[this.segments.length - 1];
             activeArray.delete();
-            this.segments.pop();
+            console.log('POP = ', this.segments.pop());
             this.validEnd += BUFFER_INTERVAL_CAPACITY;
         }
 
-        this.segments[this.segments.length - 1].syncPoints(this.series.data.length, 0, this.validEnd);
+        this.segmentSync(this.segments[this.segments.length - 1], this.series.data.length, 0, this.validEnd)
+        // this.segments[this.segments.length - 1].syncPoints(this.series.data.length, 0, this.validEnd);
     }
 
     private newArray() {
         return new SeriesSegmentVertexArray(this.gl, this.series.data);
     }
+
     private pushFront() {
         let numDPtoAdd = this.series.data.pushed_front;
         if (numDPtoAdd === 0)
@@ -295,7 +356,8 @@ class SeriesVertexArray {
         while (true) {
             const activeArray = this.segments[0];
             const n = Math.min(this.validStart, numDPtoAdd);
-            activeArray.syncPoints(numDPtoAdd - n, n, this.validStart - n);
+            this.segmentSync(activeArray, numDPtoAdd - n, n, this.validStart - n);
+            // activeArray.syncPoints(numDPtoAdd - n, n, this.validStart - n);
             numDPtoAdd -= this.validStart - (BUFFER_POINT_CAPACITY - BUFFER_INTERVAL_CAPACITY);
             this.validStart -= n;
             if (this.validStart > 0)
@@ -322,7 +384,8 @@ class SeriesVertexArray {
         while (true) {
             const activeArray = this.segments[this.segments.length - 1];
             const n = Math.min(BUFFER_POINT_CAPACITY - this.validEnd, numDPtoAdd);
-            activeArray.syncPoints(this.series.data.length - numDPtoAdd, n, this.validEnd);
+            this.segmentSync(activeArray, this.series.data.length - numDPtoAdd, n, this.validEnd)
+            // activeArray.syncPoints(this.series.data.length - numDPtoAdd, n, this.validEnd);
             // Note that each segment overlaps with the previous one.
             // numDPtoAdd can increase here, indicating the overlapping part should be synced again to the next segment
             numDPtoAdd -= BUFFER_INTERVAL_CAPACITY - this.validEnd;
@@ -444,7 +507,7 @@ export class LineChartRenderer {
                 continue;
             }
 
-            const prog = ds.lineType === LineType.NativeLine || ds.lineType === LineType.NativePoint ? this.nativeLineProgram : this.lineProgram;
+            const prog = ds.lineType === LineType.NativeLine || ds.lineType === LineType.NativePoint || ds.lineType === LineType.Bar ? this.nativeLineProgram : this.lineProgram;
             prog.use();
             const color = resolveColorRGBA(ds.color ?? this.options.color);
             gl.uniform4fv(prog.locations.uColor, color);
@@ -456,10 +519,11 @@ export class LineChartRenderer {
                 if (ds.lineType === LineType.Step)
                     gl.uniform1f(prog.locations.uStepLocation, ds.stepLocation);
             } else {
-                if (ds.lineType === LineType.NativeLine)
+                if (ds.lineType === LineType.NativeLine || ds.lineType == LineType.Bar)
                     gl.lineWidth(lineWidth * this.options.pixelRatio);  // Not working on most platforms
-                else if (ds.lineType === LineType.NativePoint)
+                else if (ds.lineType === LineType.NativePoint) {
                     gl.uniform1f(prog.locations.uPointSize, lineWidth * this.options.pixelRatio);
+                }
             }
 
             const renderDomain = {
