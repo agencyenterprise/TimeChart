@@ -1,5 +1,5 @@
 import { DataPoint, RenderModel } from "../core/renderModel";
-import { resolveColorRGBA, ResolvedCoreOptions, TimeChartSeriesOptions, LineType } from '../options';
+import { resolveColorRGBA, ResolvedCoreOptions, TimeChartSeriesOptions, LineType, ColormapFn } from '../options';
 import { domainSearch } from '../utils';
 import { vec2 } from 'gl-matrix';
 import { TimeChartPlugin } from '.';
@@ -10,6 +10,8 @@ const BUFFER_TEXTURE_WIDTH = 520;
 const BUFFER_TEXTURE_HEIGHT = 360;
 const BUFFER_POINT_CAPACITY = BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT;
 const BUFFER_INTERVAL_CAPACITY = BUFFER_POINT_CAPACITY - 2;
+
+declare var d3: any;
 
 class ShaderUniformData {
     data;
@@ -51,10 +53,10 @@ uniform float uStepLocation;
 const int TEX_WIDTH = ${BUFFER_TEXTURE_WIDTH};
 const int TEX_HEIGHT = ${BUFFER_TEXTURE_HEIGHT};
 
-vec3 dataPoint(int index) {
+vec4 dataPoint(int index) {
     int x = index % TEX_WIDTH;
     int y = index / TEX_WIDTH;
-    return texelFetch(uDataPoints, ivec2(x, y), 0).xyz;
+    return texelFetch(uDataPoints, ivec2(x, y), 0);
 }
 `
 
@@ -74,14 +76,21 @@ uniform float uPointSize;
 uniform vec4 uColor;
 out vec4 vertexColor;
 void main() {
-    vec3 dp = dataPoint(gl_VertexID);
+    vec4 dp = dataPoint(gl_VertexID);
     vec2 pos2d = projectionScale * modelScale * (dp.xy + modelTranslate);
     gl_Position = vec4(pos2d, 0, 1);
     gl_PointSize = uPointSize;
-    vertexColor = vec4(uColor.xyz, dp.z);
+    if (dp.w == 0.0) {
+        vertexColor = vec4(uColor.xyz, dp.z);
+    } else {
+        highp int w = int(dp.w);
+        float redComp = float(w >> 16) / 255.0;
+        float greenComp = float((w >> 8) & 255) / 255.0;
+        float blueComp = float(w & 255) / 255.0;
+        vertexColor = vec4(vec3(redComp, greenComp, blueComp), dp.z);
+    }
 }
 `
-
     constructor(gl: WebGL2RenderingContext, debug: boolean) {
         super(gl, NativeLineProgram.VS_SOURCE, LINE_FS_SOURCE, debug);
         this.link();
@@ -152,7 +161,7 @@ void main() {
     }
 }
 
-const BUFFER_NUM_FIELDS = 3;
+const BUFFER_NUM_FIELDS = 4;
 
 class SeriesSegmentVertexArray {
     dataBuffer;
@@ -160,11 +169,12 @@ class SeriesSegmentVertexArray {
     constructor(
         private gl: WebGL2RenderingContext,
         private dataPoints: DataPointsBuffer,
+        private colormapFn: ColormapFn,
     ) {
         this.dataBuffer = throwIfFalsy(gl.createTexture());
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
-        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGB32F, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RGB, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * BUFFER_NUM_FIELDS));
+        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RGBA, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * BUFFER_NUM_FIELDS));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     }
@@ -183,37 +193,31 @@ class SeriesSegmentVertexArray {
         if (rowEnd < BUFFER_TEXTURE_HEIGHT && start + n === dps.length && bufferPos + n === rowEnd * BUFFER_TEXTURE_WIDTH)
             rowEnd++;
 
-        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * 3);
+        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * BUFFER_NUM_FIELDS);
         for (let r = rowStart; r < rowEnd; r++) {
             for (let c = 0; c < BUFFER_TEXTURE_WIDTH; c++) {
                 const p = r * BUFFER_TEXTURE_WIDTH + c;
                 const i = Math.max(Math.min(start + p - bufferPos, dps.length - 1), 0);
                 const dp = dps[i];
-                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * 3;
+                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * BUFFER_NUM_FIELDS;
                 buffer[bufferIdx] = dp.x;
                 buffer[bufferIdx + 1] = dp.y;
                 buffer[bufferIdx + 2] = dp.a;
+                buffer[bufferIdx + 3] = 0;
             }
         }
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGB, gl.FLOAT, buffer);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGBA, gl.FLOAT, buffer);
     }
 
     syncBarPoints(start: number, n: number, bufferPos: number) {
-        // console.log('*** start =', start, ' n =', n, 'bufferPos=', bufferPos)
         const dps: any[] = this.dataPoints
             .flatMap(dp => [{
                 ...dp
             }, {
-                x: dp.x,
-                y: dp.y,
-                a: dp.a,
+                ...dp
             }])
-        // console.log('dps = ', dps)
-        // console.log('bufferPos = ', bufferPos, 'texWidth =', texWidth, 'bufferTextureWidth = ', BUFFER_TEXTURE_WIDTH)
-        // bufferPos = bufferPos > 1 ? bufferPos * 2 : bufferPos
-        // n = n > 1 ? n * 2 : n
         let rowStart = Math.floor((Math.max(0, bufferPos + start - n)) / BUFFER_TEXTURE_WIDTH);
         let rowEnd = Math.ceil((bufferPos + start + n) / BUFFER_TEXTURE_WIDTH);
         // console.log('*11* texWidth=', BUFFER_TEXTURE_WIDTH, 'rowStart=', rowStart, 'rowEnd=', rowEnd)
@@ -223,7 +227,6 @@ class SeriesSegmentVertexArray {
         if (rowEnd < BUFFER_TEXTURE_WIDTH && start + n === dps.length && bufferPos + n === rowEnd * BUFFER_TEXTURE_WIDTH)
             rowEnd++;
 
-        // console.log('*11* rs=', rowStart, 're=', rowEnd, 'dps.length=', dps.length)
 
         const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * BUFFER_NUM_FIELDS);
         for (let r = rowStart; r < rowEnd; r++) {
@@ -232,16 +235,34 @@ class SeriesSegmentVertexArray {
                 const i = Math.max(Math.min(start + p - bufferPos, dps.length - 1), 0);
                 const dp = dps[i];
                 const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * BUFFER_NUM_FIELDS;
-                // console.log('i = ', i, 'bufferIdx =', bufferIdx, 'c=', c, 'start=', start, 'p =', p, 'bufferPos=', bufferPos, 'dp =', dp)
                 buffer[bufferIdx] = dp.x;
                 buffer[bufferIdx + 1] = dp.y + (i % 2 == 0 ? 0.5 : -0.5);
-                buffer[bufferIdx + 2] = dp.a;
+                if (this.colormapFn == null) {
+                    buffer[bufferIdx + 2] = dp.a;
+                    buffer[bufferIdx + 3] = 0.0;
+                } else {
+                    buffer[bufferIdx + 2] = 1.0;
+                    buffer[bufferIdx + 3] = this.colorStrToNumber(this.colormapFn(dp.a));
+                }
             }
         }
-        // console.log('*11* s=', rowStart, 'e=', rowEnd, 'b=', buffer)
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGB, gl.FLOAT, buffer);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGBA, gl.FLOAT, buffer);
+    }
+
+    colorStrToNumber(color: string): number {
+        if (color.startsWith('#')) {
+            return parseInt(color.slice(1), 16)
+        } else if (color.startsWith('rgb')) {
+            return parseInt(this.rgbToHex(color), 16);
+        }
+        return 0.0;
+    }
+
+    rgbToHex(rgb: string): string {
+        let [r, g, b]: any = rgb.match(/\d+/g)?.map(x => parseInt(x));
+        return ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
     }
 
     /**
@@ -271,7 +292,6 @@ class SeriesSegmentVertexArray {
         } else if (type === LineType.Bar) {
             let firstP = (first * 2) - 2
             let countP = (count * 2) + 2
-            // console.log('firstP = ', firstP, 'countP = ', countP, 'renderInterval = ', renderInterval, 'first=', first, 'last= ', last)
             gl.drawArrays(gl.LINES, firstP, countP);
         }
     }
@@ -315,7 +335,6 @@ class SeriesVertexArray {
         }
 
         this.segmentSync(this.segments[0], 0, 0, this.validStart);
-        // this.segments[0].syncPoints(0, 0, this.validStart);
     }
     private popBack() {
         if (this.series.data.poped_back === 0)
@@ -326,16 +345,15 @@ class SeriesVertexArray {
         while (this.validEnd < BUFFER_POINT_CAPACITY - BUFFER_INTERVAL_CAPACITY) {
             const activeArray = this.segments[this.segments.length - 1];
             activeArray.delete();
-            console.log('POP = ', this.segments.pop());
+            this.segments.pop();
             this.validEnd += BUFFER_INTERVAL_CAPACITY;
         }
 
         this.segmentSync(this.segments[this.segments.length - 1], this.series.data.length, 0, this.validEnd)
-        // this.segments[this.segments.length - 1].syncPoints(this.series.data.length, 0, this.validEnd);
     }
 
     private newArray() {
-        return new SeriesSegmentVertexArray(this.gl, this.series.data);
+        return new SeriesSegmentVertexArray(this.gl, this.series.data, this.series.colormapFn);
     }
 
     private pushFront() {
@@ -357,7 +375,6 @@ class SeriesVertexArray {
             const activeArray = this.segments[0];
             const n = Math.min(this.validStart, numDPtoAdd);
             this.segmentSync(activeArray, numDPtoAdd - n, n, this.validStart - n);
-            // activeArray.syncPoints(numDPtoAdd - n, n, this.validStart - n);
             numDPtoAdd -= this.validStart - (BUFFER_POINT_CAPACITY - BUFFER_INTERVAL_CAPACITY);
             this.validStart -= n;
             if (this.validStart > 0)
@@ -385,7 +402,6 @@ class SeriesVertexArray {
             const activeArray = this.segments[this.segments.length - 1];
             const n = Math.min(BUFFER_POINT_CAPACITY - this.validEnd, numDPtoAdd);
             this.segmentSync(activeArray, this.series.data.length - numDPtoAdd, n, this.validEnd)
-            // activeArray.syncPoints(this.series.data.length - numDPtoAdd, n, this.validEnd);
             // Note that each segment overlaps with the previous one.
             // numDPtoAdd can increase here, indicating the overlapping part should be synced again to the next segment
             numDPtoAdd -= BUFFER_INTERVAL_CAPACITY - this.validEnd;

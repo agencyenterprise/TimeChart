@@ -97,7 +97,10 @@ export enum LineType {
     Step,
     NativeLine,
     NativePoint,
+    Bar,
 };
+
+export type ColormapFn = (n: number) => string;
 
 export interface TimeChartSeriesOptions {
     data: DataPointsBuffer;
@@ -107,6 +110,7 @@ export interface TimeChartSeriesOptions {
     visible: boolean;
     lineType: LineType;
     stepLocation: number;
+    colormapFn: ColormapFn;
 }
 
 export function resolveColorRGBA(color: ColorSpecifier): [number, number, number, number] {
