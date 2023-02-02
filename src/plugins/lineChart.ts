@@ -6,12 +6,10 @@ import { TimeChartPlugin } from '.';
 import { LinkedWebGLProgram, throwIfFalsy } from './webGLUtils';
 import { DataPointsBuffer } from "../core/dataPointsBuffer";
 
-const BUFFER_TEXTURE_WIDTH = 520;
+const BUFFER_TEXTURE_WIDTH = 540;
 const BUFFER_TEXTURE_HEIGHT = 360;
 const BUFFER_POINT_CAPACITY = BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT;
 const BUFFER_INTERVAL_CAPACITY = BUFFER_POINT_CAPACITY - 2;
-
-declare var d3: any;
 
 class ShaderUniformData {
     data;
@@ -184,6 +182,7 @@ class SeriesSegmentVertexArray {
     }
 
     syncPoints(start: number, n: number, bufferPos: number) {
+        console.log('raster*bpos=', bufferPos, 'start=', start, 'n=', start)
         const dps = this.dataPoints;
         let rowStart = Math.floor(bufferPos / BUFFER_TEXTURE_WIDTH);
         let rowEnd = Math.ceil((bufferPos + n) / BUFFER_TEXTURE_WIDTH);
@@ -202,7 +201,7 @@ class SeriesSegmentVertexArray {
                 const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * BUFFER_NUM_FIELDS;
                 buffer[bufferIdx] = dp.x;
                 buffer[bufferIdx + 1] = dp.y;
-                buffer[bufferIdx + 2] = dp.a;
+                buffer[bufferIdx + 2] = dp.a === -1 ? 0 : dp.a;
                 buffer[bufferIdx + 3] = 0;
             }
         }
@@ -212,15 +211,32 @@ class SeriesSegmentVertexArray {
     }
 
     syncBarPoints(start: number, n: number, bufferPos: number) {
+        const deriveDp = (dp: any, x: number, y: number) => ({
+            ...dp,
+            x: dp.x + x,
+            y: dp.y + y
+        });
         const dps: any[] = this.dataPoints
-            .flatMap(dp => [{
-                ...dp
-            }, {
-                ...dp
-            }])
-        let rowStart = Math.floor((Math.max(0, bufferPos + start - n)) / BUFFER_TEXTURE_WIDTH);
-        let rowEnd = Math.ceil((bufferPos + start + n) / BUFFER_TEXTURE_WIDTH);
-        // console.log('*11* texWidth=', BUFFER_TEXTURE_WIDTH, 'rowStart=', rowStart, 'rowEnd=', rowEnd)
+            .flatMap(dp => [
+                deriveDp(dp, -0.5, -0.5),
+                deriveDp(dp, -0.5, 0.5),
+                deriveDp(dp, 0.5, 0.5),
+                deriveDp(dp, 0.5, 0.5),
+                deriveDp(dp, -0.5, -0.5),
+                deriveDp(dp, 0.5, -0.5),
+            ])
+        const numVertices = 6;
+        console.log('bpos=', bufferPos, 'start=', start, 'n=', start)
+
+        const bufferPosAux = bufferPos > 1 ? (bufferPos - 1) * 6 + 1 : 1
+        const startAux = bufferPosAux - 1
+        const nAux = n * 6
+        // const bufferPosAux = bufferPos
+        // const startAux = start
+        // const nAux = n
+        let rowStart = Math.floor((Math.max(0, bufferPosAux - startAux + nAux)) / BUFFER_TEXTURE_WIDTH);
+        let rowEnd = Math.ceil((bufferPosAux + nAux - 1) / BUFFER_TEXTURE_WIDTH);
+        // console.log('*11* texWidth=', BUFFER_TEXTURE_WIDTH, 'bposAux=', bufferPosAux, ', startAux=', startAux, 'nAux=', nAux, 'rowStart=', rowStart, 'rowEnd=', rowEnd)
         // Ensure we have some padding at both ends of data.
         if (rowStart > 0 && start === 0 && bufferPos === rowStart * BUFFER_TEXTURE_WIDTH)
             rowStart--;
@@ -230,14 +246,17 @@ class SeriesSegmentVertexArray {
 
         const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * BUFFER_NUM_FIELDS);
         for (let r = rowStart; r < rowEnd; r++) {
-            for (let c = 0; c < BUFFER_TEXTURE_WIDTH * 2; c++) {
+            for (let c = 0; c < BUFFER_TEXTURE_WIDTH * 6; c++) {
                 const p = r * BUFFER_TEXTURE_WIDTH + c + 1;
                 const i = Math.max(Math.min(start + p - bufferPos, dps.length - 1), 0);
                 const dp = dps[i];
                 const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * BUFFER_NUM_FIELDS;
                 buffer[bufferIdx] = dp.x;
-                buffer[bufferIdx + 1] = dp.y + (i % 2 == 0 ? 0.5 : -0.5);
-                if (this.colormapFn == null) {
+                buffer[bufferIdx + 1] = dp.y;
+                if (dp.a === -1) {
+                    buffer[bufferIdx + 2] = 0.0;
+                    buffer[bufferIdx + 3] = 0.0;
+                } else if (this.colormapFn == null) {
                     buffer[bufferIdx + 2] = dp.a;
                     buffer[bufferIdx + 3] = 0.0;
                 } else {
@@ -290,9 +309,9 @@ class SeriesSegmentVertexArray {
         } else if (type === LineType.NativePoint) {
             gl.drawArrays(gl.POINTS, first, count + 1);
         } else if (type === LineType.Bar) {
-            let firstP = (first * 2) - 2
-            let countP = (count * 2) + 2
-            gl.drawArrays(gl.LINES, firstP, countP);
+            let firstP = (first * 6) - 6
+            let countP = (count * 6) + 6
+            gl.drawArrays(gl.TRIANGLES, firstP, countP);
         }
     }
 }
