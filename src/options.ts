@@ -24,7 +24,7 @@ export interface ResolvedZoomOptions {
 }
 
 interface ScaleBase {
-    (x: number | {valueOf(): number}): number;
+    (x: number | { valueOf(): number }): number;
     domain(): number[] | Date[];
     range(): number[];
     copy(): this;
@@ -36,6 +36,7 @@ export interface TooltipOptions {
     enabled: boolean;
     xLabel: string;
     xFormatter: (x: number) => string;
+    hideSeries: boolean;
 }
 
 interface TimeChartRenderOptions {
@@ -76,7 +77,7 @@ export type NoPlugin = Readonly<Record<string, never>>;
 
 export type TimeChartOptions<TPlugins extends TimeChartPlugins> =
     TimeChartOptionsBase &
-    (NoPlugin extends TPlugins ? {plugins?: Record<string, never>} : {plugins: TPlugins});
+    (NoPlugin extends TPlugins ? { plugins?: Record<string, never> } : { plugins: TPlugins });
 
 export interface TimeChartOptionsBase extends Partial<TimeChartRenderOptions> {
     series?: Partial<TimeChartSeriesOptions>[];
@@ -96,7 +97,10 @@ export enum LineType {
     Step,
     NativeLine,
     NativePoint,
+    Bar,
 };
+
+export type ColormapFn = (n: number) => string;
 
 export interface TimeChartSeriesOptions {
     data: DataPointsBuffer;
@@ -106,6 +110,7 @@ export interface TimeChartSeriesOptions {
     visible: boolean;
     lineType: LineType;
     stepLocation: number;
+    colormapFn: ColormapFn;
 }
 
 export function resolveColorRGBA(color: ColorSpecifier): [number, number, number, number] {

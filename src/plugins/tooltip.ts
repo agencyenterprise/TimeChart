@@ -156,6 +156,9 @@ td {
     }
 
     update() {
+        if (this.options.hideSeries) {
+            return;
+        }
         for (const s of this.chartOptions.series) {
             if (!this.items.has(s)) {
                 const itemElements = this.createItemElements(s.name);
@@ -174,6 +177,7 @@ const defaultOptions: TooltipOptions = {
     enabled: false,
     xLabel: "X",
     xFormatter: x => x.toLocaleString(),
+    hideSeries: false,
 };
 
 export class TimeChartTooltipPlugin implements TimeChartPlugin<Tooltip> {

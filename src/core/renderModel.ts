@@ -5,6 +5,7 @@ import { EventDispatcher } from '../utils';
 export interface DataPoint {
     x: number;
     y: number;
+    a: number;
 }
 
 export interface MinMax { min: number; max: number; }

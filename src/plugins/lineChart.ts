@@ -1,14 +1,13 @@
 import { DataPoint, RenderModel } from "../core/renderModel";
-import { resolveColorRGBA, ResolvedCoreOptions, TimeChartSeriesOptions, LineType } from '../options';
+import { resolveColorRGBA, ResolvedCoreOptions, TimeChartSeriesOptions, LineType, ColormapFn } from '../options';
 import { domainSearch } from '../utils';
 import { vec2 } from 'gl-matrix';
 import { TimeChartPlugin } from '.';
 import { LinkedWebGLProgram, throwIfFalsy } from './webGLUtils';
 import { DataPointsBuffer } from "../core/dataPointsBuffer";
 
-
-const BUFFER_TEXTURE_WIDTH = 256;
-const BUFFER_TEXTURE_HEIGHT = 2048;
+const BUFFER_TEXTURE_WIDTH = 540; // better keep as a multiple of 6
+const BUFFER_TEXTURE_HEIGHT = 360;
 const BUFFER_POINT_CAPACITY = BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT;
 const BUFFER_INTERVAL_CAPACITY = BUFFER_POINT_CAPACITY - 2;
 
@@ -39,6 +38,7 @@ class ShaderUniformData {
 }
 
 const VS_HEADER = `#version 300 es
+precision highp float;
 layout (std140) uniform proj {
     vec2 modelScale;
     vec2 modelTranslate;
@@ -51,33 +51,44 @@ uniform float uStepLocation;
 const int TEX_WIDTH = ${BUFFER_TEXTURE_WIDTH};
 const int TEX_HEIGHT = ${BUFFER_TEXTURE_HEIGHT};
 
-vec2 dataPoint(int index) {
+vec4 dataPoint(int index) {
     int x = index % TEX_WIDTH;
     int y = index / TEX_WIDTH;
-    return texelFetch(uDataPoints, ivec2(x, y), 0).xy;
+    return texelFetch(uDataPoints, ivec2(x, y), 0);
 }
 `
 
 const LINE_FS_SOURCE = `#version 300 es
-precision lowp float;
-uniform vec4 uColor;
+precision highp float;
+in vec4 vertexColor;
 out vec4 outColor;
+
 void main() {
-    outColor = uColor;
+    outColor = vertexColor;
 }`;
 
 class NativeLineProgram extends LinkedWebGLProgram {
     locations;
     static VS_SOURCE = `${VS_HEADER}
 uniform float uPointSize;
-
+uniform vec4 uColor;
+out vec4 vertexColor;
 void main() {
-    vec2 pos2d = projectionScale * modelScale * (dataPoint(gl_VertexID) + modelTranslate);
+    vec4 dp = dataPoint(gl_VertexID);
+    vec2 pos2d = projectionScale * modelScale * (dp.xy + modelTranslate);
     gl_Position = vec4(pos2d, 0, 1);
     gl_PointSize = uPointSize;
+    if (dp.w == 0.0) {
+        vertexColor = vec4(uColor.xyz, dp.z);
+    } else {
+        highp int w = int(dp.w);
+        float redComp = float(w >> 16) / 255.0;
+        float greenComp = float((w >> 8) & 255) / 255.0;
+        float blueComp = float(w & 255) / 255.0;
+        vertexColor = vec4(vec3(redComp, greenComp, blueComp), dp.z);
+    }
 }
 `
-
     constructor(gl: WebGL2RenderingContext, debug: boolean) {
         super(gl, NativeLineProgram.VS_SOURCE, LINE_FS_SOURCE, debug);
         this.link();
@@ -98,13 +109,14 @@ void main() {
 class LineProgram extends LinkedWebGLProgram {
     static VS_SOURCE = `${VS_HEADER}
 uniform float uLineWidth;
-
+uniform vec4 uColor;
+out vec4 vertexColor;
 void main() {
     int side = gl_VertexID & 1;
     int di = (gl_VertexID >> 1) & 1;
     int index = gl_VertexID >> 2;
 
-    vec2 dp[2] = vec2[2](dataPoint(index), dataPoint(index + 1));
+    vec2 dp[2] = vec2[2](dataPoint(index).xy, dataPoint(index + 1).xy);
 
     vec2 base;
     vec2 off;
@@ -124,6 +136,7 @@ void main() {
     vec2 cssPose = modelScale * (base + modelTranslate);
     vec2 pos2d = projectionScale * (cssPose + off);
     gl_Position = vec4(pos2d, 0, 1);
+    vertexColor = vec4(uColor.xyz, 1.0);
 }`;
 
     locations;
@@ -146,17 +159,20 @@ void main() {
     }
 }
 
+const BUFFER_NUM_FIELDS = 4;
+
 class SeriesSegmentVertexArray {
     dataBuffer;
 
     constructor(
         private gl: WebGL2RenderingContext,
         private dataPoints: DataPointsBuffer,
+        private colormapFn: ColormapFn,
     ) {
         this.dataBuffer = throwIfFalsy(gl.createTexture());
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
-        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG32F, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RG, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * 2));
+        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, BUFFER_TEXTURE_WIDTH, BUFFER_TEXTURE_HEIGHT, gl.RGBA, gl.FLOAT, new Float32Array(BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT * BUFFER_NUM_FIELDS));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     }
@@ -166,6 +182,7 @@ class SeriesSegmentVertexArray {
     }
 
     syncPoints(start: number, n: number, bufferPos: number) {
+        console.log('raster*bpos=', bufferPos, 'start=', start, 'n=', start)
         const dps = this.dataPoints;
         let rowStart = Math.floor(bufferPos / BUFFER_TEXTURE_WIDTH);
         let rowEnd = Math.ceil((bufferPos + n) / BUFFER_TEXTURE_WIDTH);
@@ -175,20 +192,92 @@ class SeriesSegmentVertexArray {
         if (rowEnd < BUFFER_TEXTURE_HEIGHT && start + n === dps.length && bufferPos + n === rowEnd * BUFFER_TEXTURE_WIDTH)
             rowEnd++;
 
-        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * 2);
+        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * BUFFER_NUM_FIELDS);
         for (let r = rowStart; r < rowEnd; r++) {
             for (let c = 0; c < BUFFER_TEXTURE_WIDTH; c++) {
                 const p = r * BUFFER_TEXTURE_WIDTH + c;
                 const i = Math.max(Math.min(start + p - bufferPos, dps.length - 1), 0);
                 const dp = dps[i];
-                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * 2;
+                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * BUFFER_NUM_FIELDS;
                 buffer[bufferIdx] = dp.x;
                 buffer[bufferIdx + 1] = dp.y;
+                buffer[bufferIdx + 2] = dp.a === -1 ? 0 : dp.a;
+                buffer[bufferIdx + 3] = 0;
             }
         }
         const gl = this.gl;
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RG, gl.FLOAT, buffer);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGBA, gl.FLOAT, buffer);
+    }
+
+    syncBarPoints(start: number, n: number, bufferPos: number) {
+        const deriveDp = (dp: any, x: number, y: number) => ({
+            ...dp,
+            x: dp.x + x,
+            y: dp.y + y
+        });
+        const dps: any[] = this.dataPoints
+            .flatMap(dp => [
+                deriveDp(dp, -0.5, -0.5),
+                deriveDp(dp, -0.5, 0.5),
+                deriveDp(dp, 0.5, 0.5),
+                deriveDp(dp, 0.5, 0.5),
+                deriveDp(dp, -0.5, -0.5),
+                deriveDp(dp, 0.5, -0.5),
+            ])
+        const numVertices = 6;
+        const bufferPosAux = bufferPos > 1 ? (bufferPos - 1) * numVertices + 1 : 1
+        const startAux = bufferPosAux - 1
+        const nAux = n * numVertices
+
+        let rowStart = Math.floor((Math.max(0, bufferPosAux - startAux + nAux)) / BUFFER_TEXTURE_WIDTH);
+        let rowEnd = Math.ceil((bufferPosAux + nAux - 1) / BUFFER_TEXTURE_WIDTH);
+
+        // Ensure we have some padding at both ends of data.
+        if (rowStart > 0 && start === 0 && bufferPos === rowStart * BUFFER_TEXTURE_WIDTH)
+            rowStart--;
+        if (rowEnd < BUFFER_TEXTURE_WIDTH && start + n === dps.length && bufferPos + n === rowEnd * BUFFER_TEXTURE_WIDTH)
+            rowEnd++;
+
+
+        const buffer = new Float32Array((rowEnd - rowStart) * BUFFER_TEXTURE_WIDTH * BUFFER_NUM_FIELDS);
+        for (let r = rowStart; r < rowEnd; r++) {
+            for (let c = 0; c < BUFFER_TEXTURE_WIDTH * numVertices; c++) {
+                const p = r * BUFFER_TEXTURE_WIDTH + c + 1;
+                const i = Math.max(Math.min(start + p - bufferPos, dps.length - 1), 0);
+                const dp = dps[i];
+                const bufferIdx = ((r - rowStart) * BUFFER_TEXTURE_WIDTH + c) * BUFFER_NUM_FIELDS;
+                buffer[bufferIdx] = dp.x;
+                buffer[bufferIdx + 1] = dp.y;
+                if (dp.a === -1) {
+                    buffer[bufferIdx + 2] = 0.0;
+                    buffer[bufferIdx + 3] = 0.0;
+                } else if (this.colormapFn == null) {
+                    buffer[bufferIdx + 2] = dp.a;
+                    buffer[bufferIdx + 3] = 0.0;
+                } else {
+                    buffer[bufferIdx + 2] = 1.0;
+                    buffer[bufferIdx + 3] = this.colorStrToNumber(this.colormapFn(dp.a));
+                }
+            }
+        }
+        const gl = this.gl;
+        gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, rowStart, BUFFER_TEXTURE_WIDTH, rowEnd - rowStart, gl.RGBA, gl.FLOAT, buffer);
+    }
+
+    colorStrToNumber(color: string): number {
+        if (color.startsWith('#')) {
+            return parseInt(color.slice(1), 16)
+        } else if (color.startsWith('rgb')) {
+            return parseInt(this.rgbToHex(color), 16);
+        }
+        return 0.0;
+    }
+
+    rgbToHex(rgb: string): string {
+        let [r, g, b]: any = rgb.match(/\d+/g)?.map(x => parseInt(x));
+        return ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
     }
 
     /**
@@ -198,7 +287,6 @@ class SeriesSegmentVertexArray {
         const first = Math.max(0, renderInterval.start);
         const last = Math.min(BUFFER_INTERVAL_CAPACITY, renderInterval.end)
         const count = last - first
-
         const gl = this.gl;
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.dataBuffer);
@@ -216,6 +304,10 @@ class SeriesSegmentVertexArray {
             gl.drawArrays(gl.LINE_STRIP, first, count + 1);
         } else if (type === LineType.NativePoint) {
             gl.drawArrays(gl.POINTS, first, count + 1);
+        } else if (type === LineType.Bar) {
+            let firstP = (first * 6) - 6
+            let countP = (count * 6) + 6
+            gl.drawArrays(gl.TRIANGLES, firstP, countP);
         }
     }
 }
@@ -235,6 +327,15 @@ class SeriesVertexArray {
     ) {
     }
 
+
+    private segmentSync(segment: SeriesSegmentVertexArray, start: number, n: number, bufferPos: number) {
+        if (this.series.lineType == LineType.Bar) {
+            segment.syncBarPoints(start, n, bufferPos)
+        } else {
+            segment.syncPoints(start, n, bufferPos)
+        }
+    }
+
     private popFront() {
         if (this.series.data.poped_front === 0)
             return;
@@ -248,7 +349,7 @@ class SeriesVertexArray {
             this.validStart -= BUFFER_INTERVAL_CAPACITY;
         }
 
-        this.segments[0].syncPoints(0, 0, this.validStart);
+        this.segmentSync(this.segments[0], 0, 0, this.validStart);
     }
     private popBack() {
         if (this.series.data.poped_back === 0)
@@ -263,12 +364,13 @@ class SeriesVertexArray {
             this.validEnd += BUFFER_INTERVAL_CAPACITY;
         }
 
-        this.segments[this.segments.length - 1].syncPoints(this.series.data.length, 0, this.validEnd);
+        this.segmentSync(this.segments[this.segments.length - 1], this.series.data.length, 0, this.validEnd)
     }
 
     private newArray() {
-        return new SeriesSegmentVertexArray(this.gl, this.series.data);
+        return new SeriesSegmentVertexArray(this.gl, this.series.data, this.series.colormapFn);
     }
+
     private pushFront() {
         let numDPtoAdd = this.series.data.pushed_front;
         if (numDPtoAdd === 0)
@@ -287,7 +389,7 @@ class SeriesVertexArray {
         while (true) {
             const activeArray = this.segments[0];
             const n = Math.min(this.validStart, numDPtoAdd);
-            activeArray.syncPoints(numDPtoAdd - n, n, this.validStart - n);
+            this.segmentSync(activeArray, numDPtoAdd - n, n, this.validStart - n);
             numDPtoAdd -= this.validStart - (BUFFER_POINT_CAPACITY - BUFFER_INTERVAL_CAPACITY);
             this.validStart -= n;
             if (this.validStart > 0)
@@ -314,7 +416,7 @@ class SeriesVertexArray {
         while (true) {
             const activeArray = this.segments[this.segments.length - 1];
             const n = Math.min(BUFFER_POINT_CAPACITY - this.validEnd, numDPtoAdd);
-            activeArray.syncPoints(this.series.data.length - numDPtoAdd, n, this.validEnd);
+            this.segmentSync(activeArray, this.series.data.length - numDPtoAdd, n, this.validEnd)
             // Note that each segment overlaps with the previous one.
             // numDPtoAdd can increase here, indicating the overlapping part should be synced again to the next segment
             numDPtoAdd -= BUFFER_INTERVAL_CAPACITY - this.validEnd;
@@ -436,7 +538,7 @@ export class LineChartRenderer {
                 continue;
             }
 
-            const prog = ds.lineType === LineType.NativeLine || ds.lineType === LineType.NativePoint ? this.nativeLineProgram : this.lineProgram;
+            const prog = ds.lineType === LineType.NativeLine || ds.lineType === LineType.NativePoint || ds.lineType === LineType.Bar ? this.nativeLineProgram : this.lineProgram;
             prog.use();
             const color = resolveColorRGBA(ds.color ?? this.options.color);
             gl.uniform4fv(prog.locations.uColor, color);
@@ -448,10 +550,11 @@ export class LineChartRenderer {
                 if (ds.lineType === LineType.Step)
                     gl.uniform1f(prog.locations.uStepLocation, ds.stepLocation);
             } else {
-                if (ds.lineType === LineType.NativeLine)
+                if (ds.lineType === LineType.NativeLine || ds.lineType == LineType.Bar)
                     gl.lineWidth(lineWidth * this.options.pixelRatio);  // Not working on most platforms
-                else if (ds.lineType === LineType.NativePoint)
+                else if (ds.lineType === LineType.NativePoint) {
                     gl.uniform1f(prog.locations.uPointSize, lineWidth * this.options.pixelRatio);
+                }
             }
 
             const renderDomain = {
