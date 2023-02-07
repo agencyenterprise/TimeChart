@@ -6,6 +6,8 @@ export interface DataPoint {
     x: number;
     y: number;
     a: number;
+    lb: number;
+    rb: number;
 }
 
 export interface MinMax { min: number; max: number; }
