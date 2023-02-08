@@ -221,8 +221,8 @@ class SeriesSegmentVertexArray {
 
         const dps: any[] = this.dataPoints
             .flatMap(dp => {
-                const lb = dp.lb || 0.5
-                const rb = dp.rb || 0.5
+                const lb = dp.lb != null ? dp.lb : 0.5
+                const rb = dp.rb != null ? dp.rb : 0.5
                 return [
                     deriveDp(dp, -lb, -0.5),
                     deriveDp(dp, -lb, 0.5),
