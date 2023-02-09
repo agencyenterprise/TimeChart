@@ -1,6 +1,5 @@
 import { ColorCommonInstance, ColorSpaceObject, rgb } from 'd3-color';
 import { DataPointsBuffer } from './core/dataPointsBuffer';
-import { DataPoint } from './core/renderModel';
 import { TimeChartPlugin } from './plugins';
 
 type ColorSpecifier = ColorSpaceObject | ColorCommonInstance | string
