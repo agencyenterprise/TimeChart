@@ -79,14 +79,18 @@ void main() {
     vec2 pos2d = projectionScale * modelScale * (dp.xy + modelTranslate);
     gl_Position = vec4(pos2d, 0, 1);
     gl_PointSize = uPointSize;
+    float opacity = dp.z;
+    if (uColor.xyz != vec3(0.0, 0.0, 0.0)) {
+        opacity = max(dp.z, 0.4);
+    }
     if (dp.w == 0.0) {
-        vertexColor = vec4(uColor.xyz, dp.z);
+        vertexColor = vec4(uColor.xyz, opacity);
     } else {
         highp int w = int(dp.w);
         float redComp = float(w >> 16) / 255.0;
         float greenComp = float((w >> 8) & 255) / 255.0;
         float blueComp = float(w & 255) / 255.0;
-        vertexColor = vec4(vec3(redComp, greenComp, blueComp), dp.z);
+        vertexColor = vec4(vec3(redComp, greenComp, blueComp), opacity);
     }
 }
 `
