@@ -1,5 +1,6 @@
 import { ColorCommonInstance, ColorSpaceObject, rgb } from 'd3-color';
 import { DataPointsBuffer } from './core/dataPointsBuffer';
+import { DataPoint } from './core/renderModel';
 import { TimeChartPlugin } from './plugins';
 
 type ColorSpecifier = ColorSpaceObject | ColorCommonInstance | string
@@ -34,8 +35,11 @@ interface ScaleBase {
 export interface TooltipOptions {
     enabled: boolean;
     xLabel: string;
+    yLabel: string;
     xFormatter: (x: number) => string;
+    yFormatter: (x: number) => string;
     hideSeries: boolean;
+    customLabels: { [label: string]: (d: DataPoint) => string }
 }
 
 interface TimeChartRenderOptions {

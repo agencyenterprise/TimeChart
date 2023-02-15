@@ -8,6 +8,8 @@ export class Tooltip {
     tooltip: HTMLElement;
 
     xItem: ItemElements;
+    yItem: ItemElements;
+    customItems: { [label: string]: ItemElements };
     items = new Map<TimeChartSeriesOptions, ItemElements>();
     itemContainer: HTMLElement;
 
@@ -71,6 +73,16 @@ td {
         this.xItem = this.createItemElements(this.options.xLabel);
         table.appendChild(this.xItem.item);
 
+        this.yItem = this.createItemElements(this.options.yLabel);
+        table.appendChild(this.yItem.item);
+
+        this.customItems = {}
+        Object.entries(this.options.customLabels).forEach(([label, _]) => {
+            const itemElement = this.createItemElements(label)
+            this.customItems[label] = itemElement;
+            table.appendChild(itemElement.item)
+        });
+
         legendRoot.appendChild(table);
 
         this.itemContainer = table;
@@ -108,6 +120,8 @@ td {
             // display X for the data point that is the closest to the pointer
             let minPointerDistance = Number.POSITIVE_INFINITY;
             let displayingX: number | null = null;
+            let displayingY: number | null = null;
+            let customDisplayingValues: { [label: string]: string } = {}
             for (const [s, d] of chart.nearestPoint.dataPoints) {
                 const px = chart.model.pxPoint(d);
                 const dx = px.x - p.x;
@@ -116,11 +130,21 @@ td {
                 if (dis < minPointerDistance) {
                     minPointerDistance = dis;
                     displayingX = d.x;
+                    displayingY = d.y;
+                    Object.entries(options.customLabels).forEach(([label, formatFn]) => {
+                        customDisplayingValues[label] = formatFn(d);
+                    })
                 }
             }
 
             const xFormatter = options.xFormatter;
             this.xItem.value.textContent = xFormatter(displayingX!);
+            const yFormatter = options.yFormatter;
+            this.yItem.value.textContent = yFormatter(displayingY!);
+
+            Object.entries(customDisplayingValues).forEach(([label, value]) => {
+                this.customItems[label].value.textContent = value
+            })
 
             for (const s of chart.options.series) {
                 if (!s.visible)
@@ -176,7 +200,10 @@ td {
 const defaultOptions: TooltipOptions = {
     enabled: false,
     xLabel: "X",
+    yLabel: "Y",
     xFormatter: x => x.toLocaleString(),
+    yFormatter: y => y.toLocaleString(),
+    customLabels: {},
     hideSeries: false,
 };
 
