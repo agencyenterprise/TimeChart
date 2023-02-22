@@ -9,8 +9,18 @@ import { DataPointsBuffer } from "../core/dataPointsBuffer";
 // keep the width as a multiple of 6, to work with the LineType.Bar
 const BUFFER_TEXTURE_WIDTH = 540;
 const BUFFER_TEXTURE_HEIGHT = 360;
-const BUFFER_POINT_CAPACITY = (BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT) / 6;
-const BUFFER_INTERVAL_CAPACITY = BUFFER_POINT_CAPACITY - 2;
+
+function calcBufferPointCapacity(lineType: LineType) {
+    const capacity = BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT;
+    if (lineType === LineType.Bar) {
+        return capacity / 6
+    }
+    return capacity;
+}
+
+function calcBufferIntervalCapacity(lineType: LineType) {
+    return calcBufferPointCapacity(lineType) - 2;
+}
 
 class ShaderUniformData {
     data;
@@ -289,8 +299,9 @@ class SeriesSegmentVertexArray {
      * @param renderInterval [start, end) interval of data points, start from 0
      */
     draw(renderInterval: { start: number, end: number }, type: LineType) {
+        const bufferIntervalCapacity = calcBufferIntervalCapacity(type);
         const first = Math.max(0, renderInterval.start);
-        const last = Math.min(BUFFER_INTERVAL_CAPACITY, renderInterval.end)
+        const last = Math.min(bufferIntervalCapacity, renderInterval.end)
         const count = last - first
         const gl = this.gl;
         gl.activeTexture(gl.TEXTURE0);
@@ -332,6 +343,13 @@ class SeriesVertexArray {
     ) {
     }
 
+    private calcBufferPointCapacity() {
+        return calcBufferPointCapacity(this.series.lineType);
+    }
+
+    private calcBufferIntervalCapacity() {
+        return calcBufferIntervalCapacity(this.series.lineType);
+    }
 
     private segmentSync(segment: SeriesSegmentVertexArray, start: number, n: number, bufferPos: number) {
         if (this.series.lineType == LineType.Bar) {
@@ -347,11 +365,12 @@ class SeriesVertexArray {
 
         this.validStart += this.series.data.poped_front;
 
-        while (this.validStart > BUFFER_INTERVAL_CAPACITY) {
+        const bufferIntervalCapacity = this.calcBufferIntervalCapacity();
+        while (this.validStart > bufferIntervalCapacity) {
             const activeArray = this.segments[0];
             activeArray.delete();
             this.segments.shift();
-            this.validStart -= BUFFER_INTERVAL_CAPACITY;
+            this.validStart -= bufferIntervalCapacity;
         }
         this.segmentSync(this.segments[0], 0, 0, this.validStart);
     }
@@ -361,11 +380,13 @@ class SeriesVertexArray {
 
         this.validEnd -= this.series.data.poped_back;
 
-        while (this.validEnd < BUFFER_POINT_CAPACITY - BUFFER_INTERVAL_CAPACITY) {
+        const bufferIntervalCapacity = this.calcBufferIntervalCapacity();
+        const bufferPointCapacity = this.calcBufferPointCapacity();
+        while (this.validEnd < bufferPointCapacity - bufferIntervalCapacity) {
             const activeArray = this.segments[this.segments.length - 1];
             activeArray.delete();
             this.segments.pop();
-            this.validEnd += BUFFER_INTERVAL_CAPACITY;
+            this.validEnd += bufferIntervalCapacity;
         }
 
         this.segmentSync(this.segments[this.segments.length - 1], this.series.data.length, 0, this.validEnd)
@@ -379,22 +400,23 @@ class SeriesVertexArray {
         let numDPtoAdd = this.series.data.pushed_front;
         if (numDPtoAdd === 0)
             return;
-
+        const bufferPointCapacity = this.calcBufferPointCapacity();
+        const bufferIntervalCapacity = this.calcBufferIntervalCapacity();
         const newArray = () => {
             this.segments.unshift(this.newArray());
-            this.validStart = BUFFER_POINT_CAPACITY;
+            this.validStart = bufferPointCapacity;
         }
 
         if (this.segments.length === 0) {
             newArray();
-            this.validEnd = this.validStart = BUFFER_POINT_CAPACITY - 1;
+            this.validEnd = this.validStart = bufferPointCapacity - 1;
         }
 
         while (true) {
             const activeArray = this.segments[0];
             const n = Math.min(this.validStart, numDPtoAdd);
             this.segmentSync(activeArray, numDPtoAdd - n, n, this.validStart - n);
-            numDPtoAdd -= this.validStart - (BUFFER_POINT_CAPACITY - BUFFER_INTERVAL_CAPACITY);
+            numDPtoAdd -= this.validStart - (bufferPointCapacity - bufferIntervalCapacity);
             this.validStart -= n;
             if (this.validStart > 0)
                 break;
@@ -416,17 +438,20 @@ class SeriesVertexArray {
             newArray();
             this.validEnd = this.validStart = 1;
         }
-
+        
+        const bufferPointCapacity = this.calcBufferPointCapacity();
+        const bufferIntervalCapacity = this.calcBufferIntervalCapacity();
+        
         while (true) {
             const activeArray = this.segments[this.segments.length - 1];
-            const n = Math.min(BUFFER_POINT_CAPACITY - this.validEnd, numDPtoAdd);
+            const n = Math.min(bufferPointCapacity - this.validEnd, numDPtoAdd);
             this.segmentSync(activeArray, this.series.data.length - numDPtoAdd, n, this.validEnd)
             // Note that each segment overlaps with the previous one.
             // numDPtoAdd can increase here, indicating the overlapping part should be synced again to the next segment
-            numDPtoAdd -= BUFFER_INTERVAL_CAPACITY - this.validEnd;
+            numDPtoAdd -= bufferIntervalCapacity - this.validEnd;
             this.validEnd += n;
             // Fully fill the previous segment before creating a new one
-            if (this.validEnd < BUFFER_POINT_CAPACITY)
+            if (this.validEnd < bufferPointCapacity)
                 break;
             newArray();
         }
@@ -467,16 +492,17 @@ class SeriesVertexArray {
         if (this.segments.length === 0 || data[0].x > renderDomain.max || data[data.length - 1].x < renderDomain.min)
             return;
 
+        const bufferIntervalCapacity = this.calcBufferIntervalCapacity();
         const key = (d: DataPoint) => d.x
         const firstDP = domainSearch(data, 1, data.length, renderDomain.min, key) - 1;
         const lastDP = domainSearch(data, firstDP, data.length - 1, renderDomain.max, key)
         const startInterval = firstDP + this.validStart;
         const endInterval = lastDP + this.validStart;
-        const startArray = Math.floor(startInterval / BUFFER_INTERVAL_CAPACITY);
-        const endArray = Math.ceil(endInterval / BUFFER_INTERVAL_CAPACITY);
+        const startArray = Math.floor(startInterval / bufferIntervalCapacity);
+        const endArray = Math.ceil(endInterval / bufferIntervalCapacity);
 
         for (let i = startArray; i < endArray; i++) {
-            const arrOffset = i * BUFFER_INTERVAL_CAPACITY
+            const arrOffset = i * bufferIntervalCapacity
             this.segments[i].draw({
                 start: startInterval - arrOffset,
                 end: endInterval - arrOffset,
