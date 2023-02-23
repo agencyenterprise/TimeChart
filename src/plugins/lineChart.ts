@@ -7,8 +7,8 @@ import { LinkedWebGLProgram, throwIfFalsy } from './webGLUtils';
 import { DataPointsBuffer } from "../core/dataPointsBuffer";
 
 // keep the width as a multiple of 6, to work with the LineType.Bar
-const BUFFER_TEXTURE_WIDTH = 540;
-const BUFFER_TEXTURE_HEIGHT = 360;
+const BUFFER_TEXTURE_WIDTH = 30;
+const BUFFER_TEXTURE_HEIGHT = 600;
 
 function calcBufferPointCapacity(lineType: LineType) {
     const capacity = BUFFER_TEXTURE_WIDTH * BUFFER_TEXTURE_HEIGHT;
@@ -228,25 +228,27 @@ class SeriesSegmentVertexArray {
 
     syncBarPoints(start: number, n: number, bufferPos: number) {
         const deriveDp = (dp: any, x: number, y: number) => ({
-            ...dp,
             x: dp.x + x,
-            y: dp.y + y
+            y: dp.y + y,
+            a: dp.a,
         });
 
-        const dps: any[] = this.dataPoints
-            .flatMap(dp => {
-                const lb = dp.lb != null ? dp.lb : 0.5
-                const rb = dp.rb != null ? dp.rb : 0.5
-                return [
-                    deriveDp(dp, -lb, -0.5),
-                    deriveDp(dp, -lb, 0.5),
-                    deriveDp(dp, rb, 0.5),
-                    deriveDp(dp, rb, 0.5),
-                    deriveDp(dp, -lb, -0.5),
-                    deriveDp(dp, rb, -0.5),
-                ]
-            })
         const numVertices = 6;
+
+        const dps = new Array(this.dataPoints.length * numVertices)
+        for (let dataIdx = 0; dataIdx < this.dataPoints.length; dataIdx++) {
+            const dp = this.dataPoints[dataIdx];
+            const lb = dp.lb != null ? dp.lb : 0.5
+            const rb = dp.rb != null ? dp.rb : 0.5
+            const idx = dataIdx * numVertices;
+
+            dps[idx] = deriveDp(dp, -lb, -0.5);
+            dps[idx + 1] = deriveDp(dp, -lb, 0.5);
+            dps[idx + 2] = deriveDp(dp, rb, 0.5);
+            dps[idx + 3] = deriveDp(dp, rb, 0.5);
+            dps[idx + 4] = deriveDp(dp, -lb, -0.5);
+            dps[idx + 5] = deriveDp(dp, rb, -0.5);
+        }
 
         bufferPos = bufferPos > 1 ? (bufferPos - 1) * numVertices + 1 : 1
         start = start > 1 ? (start - 1) * numVertices + 1 : 1
@@ -451,8 +453,9 @@ class SeriesVertexArray {
             numDPtoAdd -= bufferIntervalCapacity - this.validEnd;
             this.validEnd += n;
             // Fully fill the previous segment before creating a new one
-            if (this.validEnd < bufferPointCapacity)
+            if (this.validEnd < bufferPointCapacity) {
                 break;
+            }
             newArray();
         }
     }
