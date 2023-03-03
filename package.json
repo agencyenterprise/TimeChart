@@ -41,6 +41,7 @@
         "d3-color": "^3.0.1",
         "d3-scale": "^4.0.2",
         "d3-selection": "^3.0.0",
+        "d3-format": "^3.0.0",
         "gl-matrix": "^3.3.0",
         "tslib": "^2.4.0"
     },
@@ -52,6 +53,7 @@
         "@types/d3-color": "^3.0.2",
         "@types/d3-scale": "^4.0.1",
         "@types/d3-selection": "^3.0.1",
+        "@types/d3-format": "^3.0.1",
         "@types/jest": "^27.4.1",
         "http-server": "^14.0.0",
         "jest": "^27.5.1",

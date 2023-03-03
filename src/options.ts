@@ -62,7 +62,7 @@ interface TimeChartRenderOptions {
     tooltip: Partial<TooltipOptions>;
 
     xRange: { min: number | Date, max: number | Date } | 'auto' | null;
-    yRange: { min: number, max: number } | 'auto' | null;
+    yRange: { min: number, max: number, intTicks: number } | 'auto' | null;
     realTime: boolean;
 
     /** Milliseconds since `new Date(0)`. Every x in data are relative to this.

@@ -1,5 +1,6 @@
 import { axisBottom, axisLeft } from 'd3-axis';
 import { select } from "d3-selection";
+import { format } from "d3-format";
 import { TimeChartPlugin } from ".";
 
 export const d3Axis: TimeChartPlugin = {
@@ -9,8 +10,13 @@ export const d3Axis: TimeChartPlugin = {
         const yg = d3Svg.append('g');
 
         const xAxis = axisBottom(chart.model.xScale);
-        const yAxis = axisLeft(chart.model.yScale);
 
+        let yAxis = axisLeft(chart.model.yScale)
+        const yRange = chart.options.yRange as { intTicks: number }
+        if (yRange?.intTicks) {
+            yAxis = yAxis.ticks(yRange.intTicks).tickFormat(format("0d"))
+        }
+    
         function update() {
             const xs = chart.model.xScale;
             const xts = chart.options.xScaleType()
