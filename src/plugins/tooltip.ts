@@ -44,7 +44,7 @@ td {
 }
 .name {
     margin-right: 10px;
-    max-width: 100px;
+    max-width: 110px;
     text-overflow: ellipsis;
     overflow: hidden;
     white-space: nowrap;
