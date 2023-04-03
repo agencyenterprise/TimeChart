@@ -9,7 +9,11 @@ export const d3Axis: TimeChartPlugin = {
         const xg = d3Svg.append('g');
         const yg = d3Svg.append('g');
 
-        const xAxis = axisBottom(chart.model.xScale);
+        let xAxis = axisBottom(chart.model.xScale);
+        const xRange = chart.options.xRange as { intTicks: number };
+        if (xRange?.intTicks) {
+            xAxis = xAxis.ticks(xRange.intTicks).tickFormat(format("0d"));
+        }
 
         let yAxis = axisLeft(chart.model.yScale)
         const yRange = chart.options.yRange as { intTicks: number }
