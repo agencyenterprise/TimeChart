@@ -61,7 +61,7 @@ interface TimeChartRenderOptions {
     legend: boolean;
     tooltip: Partial<TooltipOptions>;
 
-    xRange: { min: number | Date, max: number | Date } | 'auto' | null;
+    xRange: { min: number | Date, max: number | Date, intTicks: number } | 'auto' | null;
     yRange: { min: number, max: number, intTicks: number } | 'auto' | null;
     realTime: boolean;
 
