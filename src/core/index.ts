@@ -108,7 +108,7 @@ export default class TimeChart<TPlugins extends TimeChartPlugins=NoPlugin> {
         this.model.resize(this.el.clientWidth, this.el.clientHeight);
     }
 
-    update() {
+    private prepareUpdate() {
         if (this.disposed) {
             throw new Error('Cannot update after dispose.');
         }
@@ -120,8 +120,16 @@ export default class TimeChart<TPlugins extends TimeChartPlugins=NoPlugin> {
                 this.options.series[i] = completeSeriesOptions(s);
             }
         }
+    }
 
+    update() {
+        this.prepareUpdate()
         this.model.requestRedraw();
+    }
+
+    updateNow() {
+        this.prepareUpdate()
+        this.model.update()
     }
 
     dispose() {
