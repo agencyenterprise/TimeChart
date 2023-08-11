@@ -7,8 +7,8 @@ type ItemElements = { item: HTMLElement; example: HTMLElement; name: HTMLElement
 export class Tooltip {
     tooltip: HTMLElement;
 
-    xItem: ItemElements;
-    yItem: ItemElements;
+    xItem: ItemElements | null;
+    yItem: ItemElements | null;
     customItems: { [label: string]: ItemElements };
     items = new Map<TimeChartSeriesOptions, ItemElements>();
     itemContainer: HTMLElement;
@@ -70,11 +70,19 @@ td {
 
         const table = document.createElement("table");
 
-        this.xItem = this.createItemElements(this.options.xLabel);
-        table.appendChild(this.xItem.item);
+        if (this.options.xLabel != null) {
+            this.xItem = this.createItemElements(this.options.xLabel);
+            table.appendChild(this.xItem.item);
+        } else {
+            this.xItem = null;
+        }
 
-        this.yItem = this.createItemElements(this.options.yLabel);
-        table.appendChild(this.yItem.item);
+        if (this.options.yLabel != null) {
+            this.yItem = this.createItemElements(this.options.yLabel);
+            table.appendChild(this.yItem.item);
+        } else {
+            this.yItem = null;
+        }
 
         this.customItems = {}
         Object.entries(this.options.customLabels).forEach(([label, _]) => {
@@ -137,10 +145,14 @@ td {
                 }
             }
 
-            const xFormatter = options.xFormatter;
-            this.xItem.value.textContent = xFormatter(displayingX!);
-            const yFormatter = options.yFormatter;
-            this.yItem.value.textContent = yFormatter(displayingY!);
+            if (this.xItem != null) {
+                const xFormatter = options.xFormatter;
+                this.xItem.value.textContent = xFormatter(displayingX!);
+            }
+            if (this.yItem != null) {
+                const yFormatter = options.yFormatter;
+                this.yItem.value.textContent = yFormatter(displayingY!);
+            }
 
             Object.entries(customDisplayingValues).forEach(([label, value]) => {
                 this.customItems[label].value.textContent = value
